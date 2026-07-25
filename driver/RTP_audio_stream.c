@@ -443,24 +443,16 @@ int Destroy(TRTP_audio_stream* self)
 // Note: protected by m_csSinkRTPStreams or m_csSourceRTPStreams spinlock
 int get_RTPStream_status(TRTP_audio_stream* self, TRTP_stream_status* pstream_status)
 {
-	TRTP_stream_info* pRTP_stream_info = &self->m_tRTPStream.m_RTP_stream_info;
-	
 	if (!pstream_status)
 	{
 		return 0;
 	}
 
-	if (pRTP_stream_info->m_bSource)
-	{
-		// no status for source yet
-		// f10b pstream_status->clear();
-		return 0;
-	}
-	else
-	{
-		memcpy((void*)pstream_status, (void*)&self->m_StreamStatus.u, sizeof(TRTP_stream_status));
-		self->m_ui32StreamStatusResetCounter++;
-	}
+	// Sink (RX) and Source (TX) both populate m_StreamStatus now (see
+	// PrepareBufferLives) — previously this returned 0 for Source streams
+	// ("no status for source yet").
+	memcpy((void*)pstream_status, (void*)&self->m_StreamStatus.u, sizeof(TRTP_stream_status));
+	self->m_ui32StreamStatusResetCounter++;
 	return 1;
 }
 ////////////////////////////////////////////////////////////////////
@@ -922,6 +914,7 @@ int SendRTPAudioPacket(TRTP_audio_stream* self, const uint64_t ui64CurrentSAC, c
 		}
 
 		DEBUG_TRACE(("[%u] Error: not enough space in the packet to put the audio PacketSize = %u\n", pEth_netfilter->nic_id, ulPacketSize));
+		self->m_ui32SenderUnderrunCounter++;
 		return 0;
 	}
 
@@ -1145,6 +1138,32 @@ void PrepareBufferLives(TRTP_audio_stream* self)
 				self->m_StreamStatus.u.bit_fields.sink_RTP_PayloadType_error = 1;
 			if (bWrongRTPSAC)
 				self->m_StreamStatus.u.bit_fields.sink_RTP_SAC_error = 1;
+		}
+	}
+	else
+	{
+		// update m_StreamStatus (source/TX side) — mirrors the sink branch above
+		bool bSourceIsTransmitting = self->m_tRTPStream.m_ulSenderPacketCount != self->m_ui32SenderPacketLastCounter;
+		bool bSourceUnderrun = self->m_ui32SenderUnderrunCounter != self->m_ui32SenderUnderrunLastCounter;
+
+		self->m_ui32SenderPacketLastCounter = self->m_tRTPStream.m_ulSenderPacketCount;
+		self->m_ui32SenderUnderrunLastCounter = self->m_ui32SenderUnderrunCounter;
+
+		// Reset?
+		if (self->m_ui32StreamStatusResetCounter != self->m_ui32StreamStatusLastResetCounter)
+		{
+			self->m_ui32StreamStatusLastResetCounter = self->m_ui32StreamStatusResetCounter;
+
+			self->m_StreamStatus.u.flags = 0;
+			self->m_StreamStatus.u.bit_fields.source_transmitting = bSourceIsTransmitting ? 1 : 0;
+			self->m_StreamStatus.u.bit_fields.source_underrun = bSourceUnderrun ? 1 : 0;
+		}
+		else
+		{ // update error only
+			if (bSourceIsTransmitting)
+				self->m_StreamStatus.u.bit_fields.source_transmitting = 1;
+			if (bSourceUnderrun)
+				self->m_StreamStatus.u.bit_fields.source_underrun = 1;
 		}
 	}
 }

@@ -85,6 +85,10 @@ typedef struct
 	uint32_t m_ui32WrongRTPSACLastCounter;
 	uint32_t m_ui32RTPPacketCounter;
 	uint32_t m_ui32RTPPacketLastCounter;
+	// used for source (TX) stream status — mirrors the sink counters above
+	uint32_t m_ui32SenderPacketLastCounter; // previous value of m_tRTPStream.m_ulSenderPacketCount
+	uint32_t m_ui32SenderUnderrunCounter;
+	uint32_t m_ui32SenderUnderrunLastCounter;
 
 	MTCONVERT_MAPPED_TO_INTERLEAVE_PROTOTYPE m_pfnMTConvertMappedToInterleave;
 	MTCONVERT_INTERLEAVE__TO_MAPPED_PROTOTYPE m_pfnMTConvertInterleaveToMapped;

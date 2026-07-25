@@ -117,6 +117,10 @@ typedef struct {
 			unsigned int sink_muted : 1;					// 0x20: live has been muted
 			unsigned int sink_some_muted : 1;				// 0x40: used by Horus implementation which is only able to detect that a incomming stream is muted but which doesn't know which one
 			unsigned int sink_all_muted : 1;				// 0x80: audio missing from all available streams (i.e. ST2022-7)
+			// Source (TX) fields below — a stream instance is either a Sink or a
+			// Source (see m_bSource), never both, so sharing this union is safe.
+			unsigned int source_transmitting : 1;			// 0x100: RTP packets have been sent since the last status check
+			unsigned int source_underrun : 1;				// 0x200: failed to acquire an audio buffer to transmit (AcquireTransmitPacket failure)
 		} bit_fields;
 		unsigned int flags;
 	} u;
@@ -372,6 +376,12 @@ public:
 
 	void set_sink_min_time(int iMinTime) { sink_min_time = iMinTime; }
 	int get_sink_min_time() const { return sink_min_time; }
+
+	void set_source_transmitting(bool bValue) { u.bit_fields.source_transmitting = bValue ? 1 : 0; }
+	bool is_source_transmitting() const { return u.bit_fields.source_transmitting == 1; }
+
+	void set_source_underrun(bool bValue) { u.bit_fields.source_underrun = bValue ? 1 : 0; }
+	bool is_source_underrun() const { return u.bit_fields.source_underrun == 1; }
 
 protected:
 	//TRTP_stream_status m_stream_status;
