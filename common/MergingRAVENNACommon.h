@@ -67,8 +67,8 @@
 #else
     #define DEFAULT_TICFRAMESIZE        64
 
-    #define MAX_NUMBEROFINPUTS          128
-    #define MAX_NUMBEROFOUTPUTS         128
+    #define MAX_NUMBEROFINPUTS          256
+    #define MAX_NUMBEROFOUTPUTS         256
 #endif
 
 #define DEFAULT_NADAC_TICFRAMESIZE      512
