@@ -1171,6 +1171,8 @@ void GetPTPStatus(TClock_PTP* self, TPTPStatus* pPTPStatus)
     pPTPStatus->ui64GMID[0] = self->m_ui64PTPMaster_GMID;
     pPTPStatus->i32NetworkJitter = 0; // TODO
 	pPTPStatus->i32ClockJitter = self->m_maxClkJitter;
+	// m_i64TIC_PTPToRTXClockOffset is in REF_UNIT ticks (1 tick = NS_2_REF_UNIT ns); see ProcessT1().
+	pPTPStatus->i64PTPOffset = self->m_i64TIC_PTPToRTXClockOffset * NS_2_REF_UNIT;
 
 	//MTAL_DP("[%u] CLK jitter = %u\n", self->m_pEth_netfilter->nic_id, self->m_maxClkJitter);
 	self->m_maxClkJitter = 0;

@@ -1073,6 +1073,11 @@ void OnNewMessage(struct TManager* self, struct MT_ALSA_msg* msg_rcv)
 
             TPTPStatus ptpStatus;
              GetPTPStatus(&self->m_PTP[self->m_Active_PTP_NIC_Idx], &ptpStatus);
+            ptpStatus.ui8ActivePTPNic = self->m_Active_PTP_NIC_Idx;
+            ptpStatus.nLegLockStatus[0] = GetLockStatus(&self->m_PTP[0]);
+            ptpStatus.nLegLockStatus[1] = GetLockStatus(&self->m_PTP[1]);
+            ptpStatus.ui64LegGMID[0] = self->m_PTP[0].m_ui64PTPMaster_GMID;
+            ptpStatus.ui64LegGMID[1] = self->m_PTP[1].m_ui64PTPMaster_GMID;
 
             msg_reply.errCode = 0;
             msg_reply.dataSize = sizeof(TPTPStatus);

@@ -53,6 +53,16 @@ typedef struct
 	int32_t         i32GMIDStats[2];                // 0 link down, 1 link up and locked, 2 link up not locked(i.e. lock the other one)
 	int32_t         i32NetworkJitter;
 	int32_t         i32ClockJitter;
+	int64_t         i64PTPOffset;                   // local RTX clock minus PTP master time, in ns (negative = local clock behind master)
+	uint8_t         ui8ActivePTPNic;                 // which NIC (0/1) the global clock is currently disciplined from - see Select_PTP_NIC()/GetSelected_PTP_NIC() in manager.c
+	// Real per-NIC lock status/grandmaster ID (index 0 = primary/Red, 1 =
+	// secondary/Blue) - each NIC runs its own independent TClock_PTP
+	// instance (self->m_PTP[nicId] in manager.c), so these are genuinely
+	// two separate PTP receivers, not a primary/backup pair within one.
+	// (i32GMIDStats[2]/ui64GMID[2] above look like they were meant for
+	// this but are never actually written anywhere in the driver.)
+	EPTPLockStatus  nLegLockStatus[2];
+	uint64_t        ui64LegGMID[2];
 } TPTPStatus;
 
 typedef struct
