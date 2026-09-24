@@ -42,6 +42,14 @@
 struct sock *nl_u2k_sk = NULL;
 struct sock *nl_k2u_sk = NULL;
 int daemon_pid_ = -1;
+/* Requester of the command being handled right now. Replies go back to whoever asked: a second
+ * userland client of this channel (e.g. ptp-clock-manager polling GetPTPStatus) used to have its
+ * replies delivered to the daemon instead - it never got an answer, and the daemon read replies to
+ * commands it had not sent. Every reply is produced synchronously inside the request's handling
+ * (OnNewMessage), so the pid is known for its whole duration; the mutex keeps two concurrent
+ * requesters from swapping it. -1 = not inside a request: fall back to the daemon. */
+static int reply_pid_ = -1;
+static DEFINE_MUTEX(request_mutex);
 static int have_response = 0;
 DECLARE_WAIT_QUEUE_HEAD(response_waitqueue);     // Waitqueue for wait response.
 
@@ -94,11 +102,15 @@ void recv_msg_from_user_land(struct sk_buff *skb)
         {
             rx_msg->data = (char*)nlmsg_data(nlh) + sizeof(struct MT_ALSA_msg);
         }
+        mutex_lock(&request_mutex);
+        reply_pid_ = pid;
         /*tx_msg.id = rx_msg->id;
         tx_msg.errCode = 0;
         tx_msg.dataSize = 0;
         send_reply_to_user_land(&tx_msg);*/
         nl_rx_msg((void*)rx_msg);
+        reply_pid_ = -1;
+        mutex_unlock(&request_mutex);
     }
 }
 
@@ -112,7 +124,7 @@ int send_reply_to_user_land(struct MT_ALSA_msg* msg)
 
     if (msg == NULL)
         return -2;
-    if (daemon_pid_ == -1)
+    if (reply_pid_ == -1 && daemon_pid_ == -1)
         return -5;
 
     msg_header_size = sizeof(struct MT_ALSA_msg);
@@ -132,7 +144,7 @@ int send_reply_to_user_land(struct MT_ALSA_msg* msg)
         memcpy((char*)nlmsg_data(nlh) + msg_header_size, msg->data, msg->dataSize);
     }
 
-    res = nlmsg_unicast(nl_u2k_sk, skb_out, daemon_pid_);
+    res = nlmsg_unicast(nl_u2k_sk, skb_out, reply_pid_ != -1 ? reply_pid_ : daemon_pid_);
     if (res < 0)
     {
         printk(KERN_INFO "Error while sending back to user in fct %s\n", __FUNCTION__);
