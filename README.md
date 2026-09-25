@@ -2,6 +2,25 @@
 
 > Please note, this is an improved fork of Merging Technologies' [driver on Bitbucket](https://bitbucket.org/MergingTechnologies/ravenna-alsa-lkm/src/).
 
+## Changes in this fork (GBA-TAB, branch experimental-hw-timestamping) ##
+
+Made while running the driver under `aes67-linux-daemon` + `mxl-bridge` on real RAVENNA networks:
+
+- **Per-leg PTP status** for SMPTE 2022-7 redundancy, TX stream status bits, and a **256-channel
+  ceiling** (the daemon sets the driver's input/output count to its `alsa_channels` at startup; the
+  driver default stays 64).
+- **netlink replies go to the requesting process**, not always to the daemon, so a second client of
+  the command channel no longer steals or desyncs the daemon's replies.
+- **RTP sink re-latches to a restarted sender's new SSRC** instead of staying muted until the Sink
+  is re-created.
+- **Use-after-free fix (host crash)**: the stream timer could copy into a capture/playback buffer
+  ALSA was freeing while a client closed the device. `capture_active`/`playback_active` flags, set by
+  trigger start and cleared by trigger stop and `hw_free` under the stream locks, now gate the copy
+  (all kernel versions). Verified with 300 open/close cycles under traffic.
+
+`mxl-stack` (`steps/40-host.sh`) installs it as the DKMS package `merging-ravenna`, so kernel updates
+rebuild it.
+
 ## License ##
 
 Although the Kernel part of this software is licensed under [GNU GPL](https://www.gnu.org/licenses/gpl-3.0.en.html), the User land part (Butler) is divided into two licenses according to the following application :
