@@ -143,6 +143,13 @@ struct mr_alsa_audio_chip
     spinlock_t capture_lock;
     struct snd_pcm_substream *playback_substream;
     spinlock_t playback_lock;
+    /* The timer may touch a stream's DMA buffer only while this is set. Set/cleared under the
+     * stream's lock by trigger (and cleared by hw_free), so once trigger(STOP) returns no timer
+     * callback is still copying, and ALSA can free the buffer. stopIO's own flag is read without
+     * a lock: a tick that passed it could still copy into a buffer hw_free was freeing (page
+     * fault in MTConvertMappedInt32ToInt32LEInterleave from t_clock_timer on stream close). */
+    bool capture_active;
+    bool playback_active;
 
     struct platform_device *dev;
 
@@ -652,7 +659,7 @@ static int mr_alsa_audio_pcm_interrupt(void *rawchip, int direction)
             spin_lock(&chip->capture_lock);
 
             sub = chip->capture_substream;
-            if (!sub) {
+            if (!sub || !chip->capture_active || !chip->dma_capture_buffer) {
                 spin_unlock(&chip->capture_lock);
                 return 0;
             }
@@ -714,7 +721,7 @@ static int mr_alsa_audio_pcm_interrupt(void *rawchip, int direction)
             spin_lock(&chip->playback_lock);
 
             sub = chip->playback_substream;
-            if (!sub) {
+            if (!sub || !chip->playback_active || !chip->dma_playback_buffer) {
                 spin_unlock(&chip->playback_lock);
                 return 0;
             }
@@ -872,6 +879,25 @@ static struct ravenna_mgr_ops g_ravenna_manager_ops = {
 /// This callback is atomic. You cannot call functions which may sleep (no mutexes or any schedule-related functions)
 /// The trigger callback should be as minimal as possible, just really triggering the DMA. The other stuff should be initialized
 /// hw_params and prepare callbacks properly beforehand.
+/* Marks a stream's DMA buffer usable (or not) by the timer; see mr_alsa_audio_chip.capture_active.
+ * Taking the lock also waits for a timer callback that is copying right now. */
+static void mr_alsa_audio_set_active(struct mr_alsa_audio_chip *chip, bool is_playback, bool active, bool forget_buffer)
+{
+    unsigned long flags;
+    spinlock_t *lock = is_playback ? &chip->playback_lock : &chip->capture_lock;
+    spin_lock_irqsave(lock, flags);
+    if (is_playback) {
+        chip->playback_active = active;
+        if (forget_buffer)
+            chip->dma_playback_buffer = NULL;
+    } else {
+        chip->capture_active = active;
+        if (forget_buffer)
+            chip->dma_capture_buffer = NULL;
+    }
+    spin_unlock_irqrestore(lock, flags);
+}
+
 static int mr_alsa_audio_pcm_trigger(struct snd_pcm_substream *alsa_sub, int cmd)
 {
     struct mr_alsa_audio_chip *chip = snd_pcm_substream_chip(alsa_sub);
@@ -906,12 +932,14 @@ static int mr_alsa_audio_pcm_trigger(struct snd_pcm_substream *alsa_sub, int cmd
             n = snd_pcm_playback_hw_avail(runtime);
             n += runtime->delay;
         }
+        mr_alsa_audio_set_active(chip, alsa_sub->stream == SNDRV_PCM_STREAM_PLAYBACK, true, false);
         chip->mr_alsa_audio_ops->start_interrupts(chip->ravenna_peer, alsa_sub->stream == SNDRV_PCM_STREAM_PLAYBACK);
         return 0;
 
     case SNDRV_PCM_TRIGGER_STOP:
     case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
     case SNDRV_PCM_TRIGGER_SUSPEND:
+        mr_alsa_audio_set_active(chip, alsa_sub->stream == SNDRV_PCM_STREAM_PLAYBACK, false, false);
         chip->mr_alsa_audio_ops->stop_interrupts(chip->ravenna_peer, alsa_sub->stream == SNDRV_PCM_STREAM_PLAYBACK);
         return 0;
     default:
@@ -1686,11 +1714,25 @@ static int mr_alsa_audio_pcm_hw_free(struct snd_pcm_substream *substream)
         struct mr_alsa_audio_chip *chip = snd_pcm_substream_chip(substream);
 
         printk(KERN_DEBUG "entering mr_alsa_audio_pcm_hw_free (substream name=%s #%d) ...\n", substream->name, substream->number);
+        mr_alsa_audio_set_active(chip, substream->stream == SNDRV_PCM_STREAM_PLAYBACK, false, true);
         spin_lock_irq(&chip->lock);
         err = snd_pcm_lib_free_vmalloc_buffer(substream);
         spin_unlock_irq(&chip->lock);
     }
     return err;
+}
+#else
+/// hw_free callback (6.12+): ALSA frees the managed buffer right after this returns - the timer
+/// must have let go of it first.
+static int mr_alsa_audio_pcm_hw_free(struct snd_pcm_substream *substream)
+{
+    if (substream)
+    {
+        struct mr_alsa_audio_chip *chip = snd_pcm_substream_chip(substream);
+        printk(KERN_DEBUG "entering mr_alsa_audio_pcm_hw_free (substream name=%s #%d) ...\n", substream->name, substream->number);
+        mr_alsa_audio_set_active(chip, substream->stream == SNDRV_PCM_STREAM_PLAYBACK, false, true);
+    }
+    return 0;
 }
 #endif
 
@@ -2128,9 +2170,7 @@ static struct snd_pcm_ops mr_alsa_audio_pcm_playback_ops = {
     .close =    mr_alsa_audio_pcm_close,
     .ioctl =    snd_pcm_lib_ioctl,
     .hw_params =    mr_alsa_audio_pcm_hw_params,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
     .hw_free =  mr_alsa_audio_pcm_hw_free,
-#endif
     .prepare =  mr_alsa_audio_pcm_prepare,
     .trigger =  mr_alsa_audio_pcm_trigger,
     .pointer =  mr_alsa_audio_pcm_pointer,
@@ -2145,9 +2185,7 @@ static struct snd_pcm_ops mr_alsa_audio_pcm_capture_ops = {
     .close =    mr_alsa_audio_pcm_close,
     .ioctl =    snd_pcm_lib_ioctl,
     .hw_params =    mr_alsa_audio_pcm_hw_params,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
     .hw_free =  mr_alsa_audio_pcm_hw_free,
-#endif
     .prepare =  mr_alsa_audio_pcm_prepare,
     .trigger =  mr_alsa_audio_pcm_trigger,
     .pointer =  mr_alsa_audio_pcm_pointer,
@@ -2337,6 +2375,8 @@ static int mr_alsa_audio_create_alsa_devices(   struct snd_card *card,
     spin_lock_init(&chip->capture_lock);
     chip->playback_substream = NULL;
     spin_lock_init(&chip->playback_lock);
+    chip->capture_active = false;
+    chip->playback_active = false;
 
     chip->playback_volume_control = NULL;
     chip->playback_switch_control = NULL;
