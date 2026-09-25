@@ -42,6 +42,10 @@
 #include "MTAL_DP.h"
 #include "c_wrapper_lib.h"
 
+// Consecutive packets with one new SSRC after which a sink follows a restarted sender
+// (100 ms at 1 ms packet time, 12.5 ms at 125 us).
+#define SSRC_RELATCH_PACKETS 100
+
 #define DEBUG_TRACE(x) MTAL_DP("[RTP Stream] "); MTAL_DP x
 #define ASSERT(x) {if(!(x)) { MTAL_DP("Assert in %s line %i\n", __FILE__, __LINE__); }}
 #define MTAL_RtTraceEvent(x, y, z)
@@ -582,6 +586,30 @@ int ProcessRTPAudioPacket(TRTP_audio_stream* self, TRTPPacketBase* pRTPPacketBas
 #endif
 		)
 	{
+		const uint32_t ui32NewSSRC = MTAL_SWAP32(pRTPPacketBase->RTPHeader.ui32SSRC);
+		if(self->m_ui32CandidateSSRCPackets == 0 || self->m_ui32CandidateSSRC != ui32NewSSRC)
+		{
+			self->m_ui32CandidateSSRC = ui32NewSSRC;
+			self->m_ui32CandidateSSRCPackets = 1;
+		}
+		else
+		{
+			self->m_ui32CandidateSSRCPackets++;
+		}
+		if(self->m_ui32CandidateSSRCPackets >= SSRC_RELATCH_PACKETS)
+		{
+			// The latched sender is gone (not one of its packets among the last
+			// SSRC_RELATCH_PACKETS) and a single new one took its place: follow it. The sequence
+			// number restarts with the new SSRC, so re-anchor it rather than count a jump.
+			printk(KERN_INFO "%s: RTP SSRC changed 0x%x -> 0x%x, re-latched after %u packets\n",
+				pRTP_stream_info->m_cName, pRTP_stream_info->m_ui32SSRC, ui32NewSSRC, self->m_ui32CandidateSSRCPackets);
+			set_SSRC(pRTP_stream_info, ui32NewSSRC);
+			self->m_ui32CandidateSSRCPackets = 0;
+			self->m_usWrongSSRCMessageCounter = 0;
+			self->m_tRTPStream.m_usIncomingSeqNum = (unsigned short)(MTAL_SWAP16(pRTPPacketBase->RTPHeader.usSeqNum) - 1);
+			goto ssrc_ok;
+		}
+
 		self->m_ui32WrongRTPSSRCCounter++;
 
 		// TODO: log error
@@ -593,6 +621,13 @@ int ProcessRTPAudioPacket(TRTP_audio_stream* self, TRTPPacketBase* pRTPPacketBas
 		}
 		return 0;
 	}
+
+	else
+	{
+		// A packet from the latched sender: it is alive, so no pending re-latch.
+		self->m_ui32CandidateSSRCPackets = 0;
+	}
+ssrc_ok:
 
 	// Sequence number check
 	if((unsigned short)(self->m_tRTPStream.m_usIncomingSeqNum + 1) != MTAL_SWAP16(pRTPPacketBase->RTPHeader.usSeqNum))

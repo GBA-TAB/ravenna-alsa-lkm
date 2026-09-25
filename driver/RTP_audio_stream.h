@@ -70,6 +70,12 @@ typedef struct
 	// Messages Counter
 	unsigned short m_usWrongSSRCMessageCounter;
 
+	// SSRC re-latch: a sender that restarts its stream comes back with a new SSRC. Once
+	// SSRC_RELATCH_PACKETS consecutive packets carry the same new SSRC (and none the latched one in
+	// between), the sink re-latches instead of dropping that stream until it is re-created.
+	uint32_t m_ui32CandidateSSRC;
+	uint32_t m_ui32CandidateSSRCPackets;
+
 	// Stream  status
 	TRTP_stream_status m_StreamStatus; // protected by m_csSinkRTPStreams or m_csSourceRTPStreams spinlock
 	uint32_t m_ui32StreamStatusResetCounter;
