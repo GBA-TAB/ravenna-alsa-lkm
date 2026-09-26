@@ -72,7 +72,8 @@ enum MT_ALSA_msg_id
     MT_ALSA_Msg_GetRTPStreamStatus,       //    U2K One input: hHandle, one output: the RTP stream status struct
     MT_ALSA_Msg_SetPTPConfig,             //    U2K One input: TPTPConfig
     MT_ALSA_Msg_GetPTPConfig,             //    U2K One output: TPTPConfig
-    MT_ALSA_Msg_GetPTPStatus              //    U2K One output: TPTPStatus
+    MT_ALSA_Msg_GetPTPStatus,             //    U2K One output: TPTPStatus
+    MT_ALSA_Msg_SetPTPExternalSample      //    U2K One input: TPTPExternalSample (module option ptp_source=1 only)
 };
 
 struct MT_ALSA_msg

@@ -1086,6 +1086,26 @@ void OnNewMessage(struct TManager* self, struct MT_ALSA_msg* msg_rcv)
             CW_netlink_send_reply_to_user_land(&msg_reply);
             return; // because ptpStatus is out of the scope if send reply at the end of the function
         }
+        case MT_ALSA_Msg_SetPTPExternalSample:
+            if (msg_rcv->dataSize != sizeof(TPTPExternalSample))
+            {
+                MTAL_DP_ERR("MT_ALSA_Msg_SetPTPExternalSample invalid data size\n");
+                msg_reply.errCode = -315;
+            }
+            else if (ptp_source != 1)
+            {
+                msg_reply.errCode = -401; // the driver runs its own PTP (module option ptp_source=0)
+            }
+            else
+            {
+                int i;
+                for (i = 0; i < _MAX_NICS; i++)
+                {
+                    ProcessExternalSample(&self->m_PTP[i], (const TPTPExternalSample*)msg_rcv->data);
+                }
+                msg_reply.errCode = 0;
+            }
+            break;
         case MT_ALSA_Msg_SetMasterOutputVolume:
             if (msg_rcv->dataSize != sizeof(int32_t))
             {

@@ -179,6 +179,8 @@ extern "C"
  //######################################################
 
  void ProcessT1(TClock_PTP* self, uint64_t ui64T1); // from Sync or Follow_up
+ void ProcessExternalSample(TClock_PTP* self, const TPTPExternalSample* pSample); // ptp_source=1
+ extern int ptp_source;
 
  bool SendDelayReq(TClock_PTP* self, TPTPV2MsgFollowUpPacket* pPTPV2MsgFollowUpPacket);
 

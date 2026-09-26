@@ -38,6 +38,15 @@
 
 #include "c_wrapper_lib.h" //f10b use for module... to define into that file
 
+#include <linux/moduleparam.h>
+
+/* Where PTP time comes from: 0 = this driver's own PTP slave (Sync/Follow_Up timestamped in software
+ * in the netfilter hook), 1 = an external client via MT_ALSA_Msg_SetPTPExternalSample (e.g. ptp4l
+ * with NIC hardware timestamps + ptp-clock-manager --phc). PTP packets reach user space either way. */
+int ptp_source = 0;
+module_param(ptp_source, int, 0444);
+MODULE_PARM_DESC(ptp_source, "PTP time source: 0 = internal (software timestamps), 1 = external samples (ptp-clock-manager --phc)");
+
 #include "module_timer.h"
 
 #include "EtherTubeInterfaces.h"
@@ -236,6 +245,10 @@ EDispatchResult process_PTP_packet(TClock_PTP* self, TUDPPacketBase* pUDPPacketB
 
 	if(pUDPPacketBase->UDPHeader.usDestPort != MTAL_SWAP16(319) && pUDPPacketBase->UDPHeader.usDestPort != MTAL_SWAP16(320))
 	{ // 319: PTP Event; 320: PTP General
+		return DR_PACKET_NOT_USED;
+	}
+	if (ptp_source == 1)
+	{ // time comes from ProcessExternalSample(); the packets are for the external client
 		return DR_PACKET_NOT_USED;
 	}
 
@@ -730,6 +743,42 @@ void ProcessT1(TClock_PTP* self, uint64_t ui64T1)
     spin_unlock((spinlock_t*)self->m_csPTPTime);
 
 	self->m_ui64T1 = ui64T1;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ptp_source=1: one (PTP time, local time) pair from an external PTP client. It stands in for a
+// Sync (T2 = local arrival time) and its Follow_Up (T1 = PTP origin time), so the servo below
+// (ProcessT1) and the TIC logic are unchanged - only the quality of the samples differs.
+void ProcessExternalSample(TClock_PTP* self, const TPTPExternalSample* pSample)
+{
+	uint64_t ui64T2 = pSample->ui64LocalTime / NS_2_REF_UNIT; // [100ns]
+	uint64_t ui64T1 = pSample->ui64PTPTime / NS_2_REF_UNIT;   // [100ns]
+
+	if (!self->m_bInitialized || !self->m_bAudioFrameTICTimerStarted)
+	{
+		return;
+	}
+	if (!pSample->ui8Locked)
+	{
+		if (GetLockStatus(self) != PTPLS_UNLOCKED)
+		{
+			printk("[%u] external PTP source not locked, resetting\n", self->m_pEth_netfilter->nic_id);
+			ResetPTPLock(self, true);
+		}
+		return;
+	}
+	self->m_ui64PTPMaster_GMID = pSample->ui64GMID;
+
+	spin_lock((spinlock_t*)self->m_csPTPTime);
+	self->m_ui64DeltaT2 = ui64T2 - self->m_ui64T2;
+	self->m_ui64T2 = ui64T2;
+	self->m_ui64TIC_LastRTXClockTimeAtT2 = self->m_ui64TIC_LastRTXClockTime;
+	spin_unlock((spinlock_t*)self->m_csPTPTime);
+
+	// Keeps the Sync watchdog in timerProcess() fed: no sample for 2 s drops the lock.
+	self->m_wLastSyncSequenceId++;
+
+	ProcessT1(self, ui64T1);
 }
 
 ////////////////////////////////////////////////////////////////////

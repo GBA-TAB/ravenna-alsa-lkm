@@ -46,6 +46,17 @@ typedef struct
 	uint8_t		ui8DSCP;
 } TPTPConfig;
 
+// One time sample from an external PTP client (ptp_source=1): e.g. ptp4l disciplining the NIC's
+// hardware clock, read against the driver's own clock by ptp-clock-manager --phc. Replaces the
+// driver's software-timestamped Sync/Follow_Up as the input of its media-clock servo.
+typedef struct
+{
+	uint64_t        ui64PTPTime;                    // ns, PTP timescale (the grandmaster's)
+	uint64_t        ui64LocalTime;                  // ns, CLOCK_MONOTONIC (ktime_get) at the same instant
+	uint64_t        ui64GMID;                       // grandmaster clock identity, bytes in wire order
+	uint8_t         ui8Locked;                      // the external client is locked to that grandmaster
+} TPTPExternalSample;
+
 typedef struct
 {
 	EPTPLockStatus nPTPLockStatus;
